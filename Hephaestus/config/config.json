@@ -1,0 +1,13 @@
+{
+    "HELP_cost": "Fallback price (in the currency below) used when the flea price of a build can't be calculated",
+    "cost": 123,
+    "HELP_KEY_EUROS_ID": "569668774bdc2da2298b4568",
+    "HELP_KEY_ROUBLES_ID": "5449016a4bdc2d6f028b456f",
+    "HELP_KEY_DOLLARS_ID": "5696686a4bdc2da3298b456a",
+    "EXPLAIN": "USE one of the above ids for currency",
+    "currency": "569668774bdc2da2298b4568",
+    "HELP_discount": "acceptable value 0-100 (0 - no discount, 100 - free)",
+    "discount": 90,
+    "HELP_debugLogging": "true = write one server log line per rebuild (build count, prices)",
+    "debugLogging": false
+}
