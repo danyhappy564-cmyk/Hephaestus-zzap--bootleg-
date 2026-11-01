@@ -25,28 +25,29 @@ public class HephaestusLoader(
     TraderConfig traderConfig,
     TradersTable tradersTable,
     LocaleTable localeTable,
-    BuildAssortService buildAssortService) : IOnLoad
+    BuildAssortService buildAssortService,
+    LiveSettingsService liveSettings) : IOnLoad
 {
     private const int RefreshSeconds = 3600;
-
-    private const string Description =
-        "You share the reseller license of your creations to Hephaestus and in return you get a hefty discount.";
 
     public Task OnLoadAsync(CancellationToken cancellationToken = default)
     {
         var modPath = modHelper.GetAbsolutePathToModFolder(Assembly.GetExecutingAssembly());
 
-        var config = HephaestusConfig.Load(Path.Combine(modPath, "config", "config.json"));
+        var configPath = Path.Combine(modPath, "config", "config.json");
+        var config = HephaestusConfig.Load(configPath);
         foreach (var warning in config.Warnings)
         {
             logger.Warning($"[Hephaestus] {warning}");
         }
-        buildAssortService.Configure(config);
+        liveSettings.Init(configPath, config);
 
         var traderBase = modHelper.GetJsonDataFromFile<TraderBase>(Path.Combine(modPath, "db"), "base.json");
         if (traderBase is null || traderBase.Id != BuildAssortService.TraderId)
         {
-            logger.Error("[Hephaestus] db/base.json is missing or has a different _id, trader not added");
+            logger.Error(Loc.L(
+                "[Hephaestus] db/base.json이 없거나 _id가 달라서 상인을 추가하지 않았습니다",
+                "[Hephaestus] db/base.json is missing or has a different _id, trader not added"));
             return Task.CompletedTask;
         }
 
@@ -79,7 +80,9 @@ public class HephaestusLoader(
         GetAssortPatch.Service = buildAssortService;
         new GetAssortPatch().Enable();
 
-        logger.Success($"[Hephaestus] trader added (currency {CurrencyName(config.Currency)}, discount {config.Discount}%)");
+        logger.Success(Loc.L(
+            $"[Hephaestus] 상인 추가 완료 (화폐 {LiveSettingsService.CurrencyName(config.Currency)}, 할인 {config.Discount}%)",
+            $"[Hephaestus] trader added (currency {LiveSettingsService.CurrencyName(config.Currency)}, discount {config.Discount}%)"));
         return Task.CompletedTask;
     }
 
@@ -89,7 +92,7 @@ public class HephaestusLoader(
         var avatar = traderBase.Avatar ?? "/files/trader/avatar/hephaestus_alxk.jpg";
         if (!File.Exists(image))
         {
-            logger.Warning($"[Hephaestus] portrait not found at {image}");
+            logger.Warning(Loc.L($"[Hephaestus] 초상화 파일이 없습니다: {image}", $"[Hephaestus] portrait not found at {image}"));
             return;
         }
 
@@ -108,15 +111,17 @@ public class HephaestusLoader(
         });
     }
 
+    /// <summary>
+    /// Name / description per game language: the game asks the server for the locale the player picked
+    /// in the game settings, so Korean players get "kr" (Korean) and everyone else English.
+    /// </summary>
     private void AddLocales(TraderBase traderBase)
     {
         var id = traderBase.Id.ToString();
-        var fullName = traderBase.Name ?? "Hephaestus";
-        var nickname = traderBase.Nickname ?? "Hephaestus";
-        var location = traderBase.Location ?? "";
 
-        foreach (var (_, locale) in localeTable.Global)
+        foreach (var (code, locale) in localeTable.Global)
         {
+            var texts = Loc.TraderTextsFor(code);
             locale.AddTransformer(dict =>
             {
                 if (dict is null)
@@ -124,20 +129,18 @@ public class HephaestusLoader(
                     return dict;
                 }
 
-                dict[$"{id} FullName"] = fullName;
-                dict[$"{id} FirstName"] = "Hephaestus";
-                dict[$"{id} Nickname"] = nickname;
-                dict[$"{id} Location"] = location;
-                dict[$"{id} Description"] = Description;
+                WriteTraderTexts(dict, id, texts);
                 return dict;
             });
         }
     }
 
-    private static string CurrencyName(string tpl) => tpl switch
+    internal static void WriteTraderTexts(IDictionary<string, string> dict, string traderId, TraderTexts texts)
     {
-        HephaestusConfig.Roubles => "RUB",
-        HephaestusConfig.Dollars => "USD",
-        _ => "EUR",
-    };
+        dict[$"{traderId} FullName"] = texts.FullName;
+        dict[$"{traderId} FirstName"] = texts.FirstName;
+        dict[$"{traderId} Nickname"] = texts.Nickname;
+        dict[$"{traderId} Location"] = texts.Location;
+        dict[$"{traderId} Description"] = texts.Description;
+    }
 }

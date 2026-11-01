@@ -7,6 +7,7 @@ using Path = System.IO.Path;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using Hephaestus;
+using HephaestusClient;
 using SPTarkov.DI.Annotations;
 using SPTarkov.Reflection.Patching;
 using SPTarkov.Server.Core.Helpers.Traders;
@@ -240,8 +241,103 @@ Check(typeof(HephaestusLoader).GetCustomAttribute<Injectable>() is not null, "lo
 var sa = typeof(BuildAssortService).GetCustomAttribute<Injectable>();
 Check(sa is not null && sa.InjectionType == InjectionType.Singleton, "BuildAssortService is a singleton");
 
+// ---------- 9. language (client F12) ----------
+Check(ClientLogic.UseKorean(ClientLogic.LangKorean, "en", false), "manual Korean wins over game/Windows");
+Check(!ClientLogic.UseKorean(ClientLogic.LangEnglish, "kr", true), "manual English wins over game/Windows");
+Check(ClientLogic.UseKorean(ClientLogic.LangAuto, "kr", false), "auto: game Korean -> Korean (Windows English)");
+Check(!ClientLogic.UseKorean(ClientLogic.LangAuto, "en", true), "auto: game English -> English (Windows Korean)");
+Check(!ClientLogic.UseKorean(ClientLogic.LangAuto, "ru", true), "auto: game Russian -> English");
+Check(ClientLogic.UseKorean(ClientLogic.LangAuto, null!, true), "auto: game not applied yet -> Windows Korean");
+Check(!ClientLogic.UseKorean(ClientLogic.LangAuto, "", false), "auto: game not applied yet -> Windows English");
+Check(ClientLogic.UseKorean("garbage", null!, true), "unknown setting value behaves like auto");
+
+// ---------- 10. trader texts per game locale (server) ----------
+Check(Loc.TraderTextsFor("kr").Nickname == "헤파이스토스" && Loc.TraderTextsFor("kr").Description.Contains("할인"), "kr locale: Korean trader texts");
+Check(Loc.TraderTextsFor("en").Nickname == "Hephaestus" && Loc.TraderTextsFor("ru").Nickname == "Hephaestus", "other locales: English trader texts");
+Check(Loc.TraderTextsFor("en").Description == "You share the reseller license of your creations to Hephaestus and in return you get a hefty discount.",
+    "English description = original text");
+var locDict = new Dictionary<string, string>();
+HephaestusLoader.WriteTraderTexts(locDict, BuildAssortService.TraderIdString, Loc.TraderTextsKorean);
+Check(locDict.Count == 5 && locDict[$"{BuildAssortService.TraderIdString} Location"] == "그리스"
+      && locDict.ContainsKey($"{BuildAssortService.TraderIdString} FullName"), "locale keys: FullName/FirstName/Nickname/Location/Description");
+// through the real LazyLoad transformer path the loader uses
+var lazy = new LazyLoad<SPTarkov.Server.Core.Models.Spt.Tables.GlobalLocaleDictionary>(() => new SPTarkov.Server.Core.Models.Spt.Tables.GlobalLocaleDictionary(), cacheValue: false);
+lazy.AddTransformer(d => { HephaestusLoader.WriteTraderTexts(d!, BuildAssortService.TraderIdString, Loc.TraderTextsFor("kr")); return d; });
+Check(lazy.Value![$"{BuildAssortService.TraderIdString} Nickname"] == "헤파이스토스", "LazyLoad transformer writes the Korean name");
+var oldKorean = Loc.Korean;
+Loc.Korean = true; var ko = Loc.L("가", "a");
+Loc.Korean = false; var en = Loc.L("가", "a");
+Loc.Korean = oldKorean;
+Check(ko == "가" && en == "a", "server log language switch");
+
+// ---------- 11. F12 <-> server settings ----------
+Check(ClientLogic.GetRoute == LiveSettingsRouter.GetRoute && ClientLogic.SetRoute == LiveSettingsRouter.SetRoute, "client and server use the same routes");
+foreach (var v in ClientLogic.CurrencyValues)
+{
+    Check(ClientLogic.CurrencyValueFromId(ClientLogic.CurrencyIdFromValue(v)) == v, $"currency round trip {v}");
+}
+Check(ClientLogic.CurrencyIdFromValue(ClientLogic.CurRouble) == HephaestusConfig.Roubles
+      && ClientLogic.CurrencyIdFromValue(ClientLogic.CurDollar) == HephaestusConfig.Dollars
+      && ClientLogic.CurrencyIdFromValue(ClientLogic.CurEuro) == HephaestusConfig.Euros, "client currency ids = server ids");
+
+var reqJson = ClientLogic.BuildSetRequest(HephaestusConfig.Roubles, 75, 5000, true);
+var req = jsonUtil.Deserialize<LiveSettings>(reqJson)!;
+Check(req.Currency == HephaestusConfig.Roubles && req.Discount == 75 && req.Cost == 5000 && req.DebugLogging == true,
+    "client request -> server LiveSettings (SPT JsonUtil)");
+
+var cfgDir = Path.Combine(Path.GetTempPath(), "heph_live_" + Guid.NewGuid().ToString("N"));
+Directory.CreateDirectory(cfgDir);
+var cfgPath = Path.Combine(cfgDir, "config.json");
+File.Copy(Path.Combine(modDir, "config", "config.json"), cfgPath);
+var assortSvc = (BuildAssortService)System.Runtime.CompilerServices.RuntimeHelpers.GetUninitializedObject(typeof(BuildAssortService));
+var live = new LiveSettingsService(NoopLogger<LiveSettingsService>.Create(), assortSvc);
+live.Init(cfgPath, HephaestusConfig.Load(cfgPath));
+
+var getResp = ClientLogic.ParseResponse(jsonUtil.Serialize(live.Get())!);
+Check(getResp.Ok && getResp.HasSettings && getResp.Currency == HephaestusConfig.Euros && getResp.Discount == 90 && getResp.Cost == 123 && !getResp.DebugLogging,
+    "get: server answer parsed by the client");
+
+var setResp = ClientLogic.ParseResponse(jsonUtil.Serialize(live.Set(req))!);
+Check(setResp.Ok && setResp.Currency == HephaestusConfig.Roubles && setResp.Discount == 75 && setResp.Cost == 5000 && setResp.DebugLogging,
+    "set: new values echoed back");
+Check(setResp.MessageKo.StartsWith("저장했습니다") && setResp.MessageEn.StartsWith("Saved"), "set: Korean text survives server JSON escaping");
+var saved = HephaestusConfig.Load(cfgPath);
+Check(saved.Currency == HephaestusConfig.Roubles && saved.Discount == 75 && saved.Cost == 5000 && saved.DebugLogging && saved.Warnings.Count == 0,
+    "set: written to config.json and reads back");
+var savedText = File.ReadAllText(cfgPath);
+Check(savedText.Contains("HELP_discount") && savedText.Contains("HELP_KEY_EUROS_ID") && !File.Exists(cfgPath + ".tmp"), "config.json keeps HELP notes, no temp file left");
+Check(live.Current.Discount == 75, "service holds the new config");
+
+var badResp = ClientLogic.ParseResponse(jsonUtil.Serialize(live.Set(new LiveSettings { Discount = 500, Cost = -3, Currency = "zzz" }))!);
+Check(badResp.Discount == 100 && badResp.Cost == 1 && badResp.Currency == HephaestusConfig.Euros, "set: bad values clamped (100%, cost 1, EUR)");
+var partial = ClientLogic.ParseResponse(jsonUtil.Serialize(live.Set(new LiveSettings { Discount = 40 }))!);
+Check(partial.Discount == 40 && partial.Cost == 1 && partial.Currency == HephaestusConfig.Euros, "set: only given values change");
+Check(!ClientLogic.ParseResponse(jsonUtil.Serialize(live.Set(null))!).Ok, "set: empty request -> not ok");
+Directory.Delete(cfgDir, true);
+
+// ---------- 12. client JSON reader ----------
+var mj = (Dictionary<string, object>)MiniJson.Parse("{\"a\":[1,2.5,-3e2,{\"b\":null}],\"s\":\"x\\\"y\\\\z\\n\\uD55C\",\"t\":true,\"f\":false}");
+Check(mj["s"] as string == "x\"y\\z\n한" && (bool)mj["t"] && !(bool)mj["f"] && ((List<object>)mj["a"]).Count == 4
+      && (double)((List<object>)mj["a"])[2] == -300, "MiniJson: escapes, numbers, arrays, bools");
+bool Throws(string json) { try { MiniJson.Parse(json); return false; } catch (FormatException) { return true; } }
+Check(Throws("{") && Throws("{\"a\":}") && Throws("[1,") && Throws("\"abc") && Throws("{} x") && Throws(new string('[', 100)),
+    "MiniJson: broken input throws FormatException (no hang)");
+var nested = (Dictionary<string, object>)MiniJson.Parse("{\"BackendUrl\":\"https://127.0.0.1:6969\",\"Version\":{\"major\":\"4.1\"}}");
+Check(nested["BackendUrl"] as string == "https://127.0.0.1:6969", "MiniJson: launcher -config argument");
+
 Console.WriteLine($"\n{pass} passed, {fail} failed");
 return fail == 0 ? 0 : 1;
+
+internal class NoopLogger<T> : System.Reflection.DispatchProxy
+{
+    public static SPTarkov.Common.Models.Logging.ISptLogger<T> Create() =>
+        System.Reflection.DispatchProxy.Create<SPTarkov.Common.Models.Logging.ISptLogger<T>, NoopLogger<T>>();
+
+    protected override object? Invoke(MethodInfo? targetMethod, object?[]? args) =>
+        targetMethod is not null && targetMethod.ReturnType.IsValueType && targetMethod.ReturnType != typeof(void)
+            ? Activator.CreateInstance(targetMethod.ReturnType)
+            : null;
+}
 
 internal static class TestExt
 {

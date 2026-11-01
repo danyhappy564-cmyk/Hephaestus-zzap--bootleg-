@@ -95,7 +95,7 @@ public class BuildAssortService(
             catch (Exception ex)
             {
                 skipped++;
-                logger.Warning($"[Hephaestus] build \"{build.Name}\" skipped: {ex.Message}");
+                logger.Warning(Loc.L($"[Hephaestus] 프리셋 \"{build.Name}\" 건너뜀: {ex.Message}", $"[Hephaestus] build \"{build.Name}\" skipped: {ex.Message}"));
             }
         }
 
@@ -104,7 +104,9 @@ public class BuildAssortService(
 
         if (_config.DebugLogging)
         {
-            logger.Info($"[Hephaestus] session {sessionId}: {added} build(s) for sale, {skipped} skipped, {trader.Assort.Items.Count} assort items in total");
+            logger.Info(Loc.L(
+                $"[Hephaestus] 세션 {sessionId}: 프리셋 {added}개 판매, {skipped}개 건너뜀, 상인 물품 전체 {trader.Assort.Items.Count}개",
+                $"[Hephaestus] session {sessionId}: {added} build(s) for sale, {skipped} skipped, {trader.Assort.Items.Count} assort items in total"));
         }
     }
 
