@@ -14,7 +14,7 @@ public class ModMetadata : IModMetadata
     public string Author { get; init; } = "alexkarpen";
     public List<string>? Contributors { get; init; } = ["R_F (SPT 4.1 port)"];
     public SemVerVersion Version { get; init; } = new("1.2.0");
-    public SemVerRange SptVersion { get; init; } = new("~4.1.6");
+    public SemVerRange SptVersion { get; init; } = new("~4.1.5");
     public bool HasPrepatcher { get; init; }
     public List<string>? Incompatibilities { get; init; }
     public Dictionary<string, SemVerRange>? ModDependencies { get; init; }
