@@ -1,0 +1,47 @@
+# Creates a GitHub release (tag + notes + zip) from files already in the repository.
+# Run it from the Actions tab (Run workflow) with the version, e.g. 1.2.0.
+# Uses release/Hephaestus-<version>.zip and release-notes/v<version>.md. Does nothing if the release already exists.
+name: Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version without v (e.g. 1.2.0)"
+        required: true
+      target:
+        description: "Commit to tag (full SHA). Empty = the commit this run uses"
+        required: false
+        default: ""
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Create release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ inputs.version }}
+          TARGET: ${{ inputs.target }}
+        run: |
+          set -euo pipefail
+          tag="v${VERSION}"
+          zip="release/Hephaestus-${VERSION}.zip"
+          notes="release-notes/v${VERSION}.md"
+          test -f "$zip"   || { echo "missing $zip"; exit 1; }
+          test -f "$notes" || { echo "missing $notes"; exit 1; }
+          target="${TARGET:-$GITHUB_SHA}"
+          if gh release view "$tag" >/dev/null 2>&1; then
+            echo "release $tag already exists, nothing to do"
+            exit 0
+          fi
+          # drop the first heading line; the release title already shows it
+          tail -n +2 "$notes" > /tmp/notes.md
+          gh release create "$tag" "$zip" --target "$target" \
+            --title "Hephaestus-zzap--bootleg- v${VERSION}" --notes-file /tmp/notes.md
+          gh release view "$tag" --json url,tagName,assets --jq '{url, tagName, assets: [.assets[].name]}'
